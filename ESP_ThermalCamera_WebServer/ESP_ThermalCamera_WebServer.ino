@@ -14,8 +14,8 @@
 #include <WiFiClient.h>
 #include "ESPAsyncWebSrv.h"
 #include "SPIFFS.h"
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1331.h>
+//#include <Adafruit_GFX.h>
+//#include <Adafruit_SSD1331.h>
 #include "MLX90640_I2C_Driver.h"
 #include "MLX90640_API.h"
 
@@ -86,7 +86,7 @@ const char* ssid = "ESP";
 const char* password = "camera";
 
 float p = 3.1415926;
-Adafruit_SSD1331 display = Adafruit_SSD1331(cs, dc, mosi, sclk, rst);
+// Adafruit_SSD1331 display = Adafruit_SSD1331(cs, dc, mosi, sclk, rst);
 
 float MaxTemp = 0;
 float MinTemp = 0;
@@ -368,38 +368,13 @@ void ThermalImageToWeb(float mlx90640To[], float MinTemp, float MaxTemp)
 
 void lcdThermalImage(float mlx90640To[], float MinTemp, float MaxTemp)
 {
-  uint8_t w,h;
-  uint8_t box = 2;
-  display.setAddrWindow(0, 0, 96, 64);
-  
-  for (h = 0; h < 24; h++) {
-    for (w = 0; w < 32; w++) {
-      uint8_t colorIndex = map(mlx90640To[w+(32*h)], MinTemp-5.0, MaxTemp+5.0, 0, 255);
-      colorIndex = constrain(colorIndex, 0, 255);
-      
-      display.fillRect(box * w, box * h, box, box, camColors[colorIndex]);
-      //display.writePixel(w, h, camColors[colorIndex]);
-    }  
-  }
-  display.endWrite();
+  return;
 }
 
 
 void lcdTestThermalImage(void)
 {
-  uint8_t w,h;
-  display.setAddrWindow(0, 0, 96, 64);
-
-  for (h = 0; h < 48; h++) {
-    for (w = 0; w < 64; w++) {
-      if (h*w <= 255) {
-        display.writePixel(w, h, camColors[h*w]);
-      } else{
-        display.writePixel(w, h, RED);
-      }
-    }
-  }
-  display.endWrite();
+  return;
 }
 
 void MLX_to_Serial(float mlx90640To[])
@@ -421,9 +396,12 @@ void MLX_to_Serial(float mlx90640To[])
 
 void setup()
 {
+  int sda_pin = 0;
+  int scl_pin = 1;
+  Wire.setPins(sda_pin, scl_pin);
   Wire.begin();
   Wire.setClock(400000); //Increase I2C clock speed to 400kHz
-  Serial.begin(115200);while (!Serial); //Wait for user to open terminal
+  Serial.begin(115200);//while (!Serial); //Wait for user to open terminal
 
   if(!SPIFFS.begin(true)){
       Serial.println("An Error has occurred while mounting SPIFFS");
@@ -433,8 +411,8 @@ void setup()
   WiFi.mode(WIFI_AP); //Access Point mode
   WiFi.softAP(ssid, password);
   
-  Serial.print("SDA pin: "); Serial.println(SDA);
-  Serial.print("SCL pin: ");Serial.println(SCL);
+  Serial.print("SDA pin: "); Serial.println(sda_pin);
+  Serial.print("SCL pin: ");Serial.println(scl_pin);
   
   Serial.println("MLX90640 IR Array Example");
 
@@ -464,54 +442,47 @@ void setup()
 
 // --- Part Display OLED --- //
 
-  display.begin();
 
   Serial.println("init");
   uint16_t time = millis();
-  display.fillScreen(BLACK);
   time = millis() - time;
   Serial.println(time, DEC);
   delay(500);
 
 
-  display.fillScreen(BLACK);
-  display.setCursor(0,0);
-  display.print("Welcome!\nThis is example of Thermal Image Camera based on MLX90640 sensor.\n by SamoX");
-  delay(2000);
-  display.fillScreen(BLACK);
+ // display.fillScreen(BLACK);
   lcdTestThermalImage();
   delay(1000);
-  //display.fillScreen(BLACK);
   //Once params are extracted, we can release eeMLX90640 array
 
 // --- Part WebServer ESP --- //
   
-  //IPAddress ServerIP = WiFi.softAPIP(); // Obtain the IP of the Serve
-  //Serial.print("IP address: ");
-  //Serial.println(ServerIP);   //IP address assigned to your ESP
+  IPAddress ServerIP = WiFi.softAPIP(); // Obtain the IP of the Serve
+  Serial.print("IP address: ");
+  Serial.println(ServerIP);   //IP address assigned to your ESP
   //display.setCursor(0,49);
   //display.print(ServerIP);    // IP address on Display
 //----------------------------------------------------------------
 
   // Route for root / web page
-  //server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-  //  request->send_P(200, "text/html", index_html, processor);
-  //  //request->send_P(200, "text/html", index_html);
-  //});
-  //server.on("/temperature", HTTP_GET, [](AsyncWebServerRequest *request){
-  //  request->send_P(200, "text/plain", getCenterTemp().c_str());
-  //});
-  //server.on("/tempmax", HTTP_GET, [](AsyncWebServerRequest *request){
-  //  request->send_P(200, "text/plain", getMaxTemp().c_str());
-  //});
-  //server.on("/tempmin", HTTP_GET, [](AsyncWebServerRequest *request){
-  //  request->send_P(200, "text/plain", getMinTemp().c_str());
-  //});
-  //server.on("/thermal", HTTP_GET, [](AsyncWebServerRequest *request){
-  //  request->send(SPIFFS, "/thermal.bmp", "image/bmp", false);
-  //});
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/html", index_html, processor);
+    //request->send_P(200, "text/html", index_html);
+  });
+  server.on("/temperature", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/plain", getCenterTemp().c_str());
+  });
+  server.on("/tempmax", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/plain", getMaxTemp().c_str());
+  });
+  server.on("/tempmin", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/plain", getMinTemp().c_str());
+  });
+  server.on("/thermal", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(SPIFFS, "/thermal.bmp", "image/bmp", false);
+  });
 
-  //server.begin();                  //Start server
+  server.begin();                  //Start server
   //Serial.println("HTTP server started");
 }
 
@@ -539,6 +510,7 @@ void loop()
     float emissivity = 0.95;
 
     MLX90640_CalculateTo(mlx90640Frame, &mlx90640, emissivity, tr, mlx90640To);
+
   }
 
   // --- START of Calculate Chess Mode --- //
@@ -608,28 +580,14 @@ void loop()
     }
 
 
-    //ThermalImageToWeb(mlx90640To, MinTemp, MaxTemp);
-    //display.fillRect(0, 0, 96, 48, BLACK);    // Black important sector - image and text on right side
     
-    lcdThermalImage(mlx90640To, MinTemp, MaxTemp);    // Function to draw Thermal Image on OLED 
-
-    display.fillRect(66, 0, 30, 48, BLACK);     // Black only text with Max, Center and Min temperature
-    
-    display.setCursor(66,0);                    // Text with Max, Center and Min Temperature on right side
-    display.setTextColor(RED);
-    display.print(MaxTemp,2);
-
-    display.setCursor(66,18);
-    display.setTextColor(WHITE);
-    display.print(CenterTemp,2);
-    
-    display.setCursor(66,36);
-    display.setTextColor(BLUE);
-    display.print(MinTemp,2);
  
     //MLX_to_Serial(mlx90640To);
-    //display.fillScreen(BLACK);
     
+  ThermalImageToWeb(mlx90640To, MinTemp, MaxTemp);
   delay(100);
+  //void ThermalImageToWeb(float mlx90640To[], float MinTemp, float MaxTemp)
+
+
 }
 
