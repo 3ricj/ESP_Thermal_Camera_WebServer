@@ -18,9 +18,14 @@
 //#include <Adafruit_SSD1331.h>
 #include "MLX90640_I2C_Driver.h"
 #include "MLX90640_API.h"
-
+#include <ArduinoJson.h>
 
 const byte MLX90640_address = 0x33; //Default 7-bit unshifted address of the MLX90640
+
+
+// Initialize JSON buffer
+const size_t capacity = JSON_OBJECT_SIZE(5) + JSON_ARRAY_SIZE(768); // Adjusted for five key-value pairs plus the raw array
+StaticJsonDocument<capacity> jsonDoc;
 
 #define TA_SHIFT 8 //Default shift for MLX90640 in open air
 
@@ -164,7 +169,7 @@ setInterval(function ( ) {
   };
   xhttp.open("GET", "/temperature", true);
   xhttp.send();
-}, 1000 ) ;
+}, 500 ) ;
 
 setInterval(function ( ) {
   var xhttp = new XMLHttpRequest();
@@ -175,7 +180,7 @@ setInterval(function ( ) {
   };
   xhttp.open("GET", "/tempmax", true);
   xhttp.send();
-}, 1000 ) ;
+}, 500 ) ;
 
 setInterval(function ( ) {
   var xhttp = new XMLHttpRequest();
@@ -186,7 +191,7 @@ setInterval(function ( ) {
   };
   xhttp.open("GET", "/tempmin", true);
   xhttp.send();
-}, 1000 ) ;
+}, 500 ) ;
 
 setInterval(function ( ) {
   var xhttp = new XMLHttpRequest();
@@ -200,7 +205,7 @@ setInterval(function ( ) {
   };
   xhttp.open("GET", "/thermal", true);
   xhttp.send();
-}, 1000 ) ;
+}, 500 ) ;
 
 </script>
 </html>)rawliteral";
@@ -458,6 +463,12 @@ server.on("/thermal", HTTP_GET, [](AsyncWebServerRequest *request) {
 
 void loop()
 {
+  static unsigned long lastPrintTime = 0;
+  unsigned long currentTime = millis();
+  float vdd, Ta, tr, emissivity;
+  float centerTempSum = 0;
+  int centerPixelCount = 0;
+
   // Read Thermal Image from MLX90640
   for (byte x = 0 ; x < 2 ; x++) //Read both subpages
   {
@@ -469,66 +480,15 @@ void loop()
       Serial.println(status);
     }
 
-    float vdd = MLX90640_GetVdd(mlx90640Frame, &mlx90640);
-    float Ta = MLX90640_GetTa(mlx90640Frame, &mlx90640);
+     vdd = MLX90640_GetVdd(mlx90640Frame, &mlx90640);
+     Ta = MLX90640_GetTa(mlx90640Frame, &mlx90640);
 
-    float tr = Ta - TA_SHIFT; //Reflected temperature based on the sensor ambient temperature
-    float emissivity = 0.95;
+     tr = Ta - TA_SHIFT; //Reflected temperature based on the sensor ambient temperature
+     emissivity = 0.95;
 
     MLX90640_CalculateTo(mlx90640Frame, &mlx90640, emissivity, tr, mlx90640To);
 
   }
-
-  // --- START of Calculate Chess Mode --- //
-    // Calculate difference between Subpages (chess-mode)
-/*    int pa = 0;
-    int niepa = 0;
-    float sumpa = 0;
-    float sumniepa = 0;
-
-    int w = 32;
-    int h = 24;
-
-    for(int i=0; i<h; i++) {
-      for(int j=0; j<w; j++) {
-        if((i+j)%2 == 0){
-          //Serial.println(j+(w*i));
-          sumpa = mlx90640To[j+(w*i)];
-          pa++;
-        }else{
-          //Serial.print("*"); Serial.println(j+(w*i));
-          sumniepa = mlx90640To[j+(w*i)];
-          niepa++;
-        }
-      }
-    }
-
-    sumpa = sumpa / (float)pa;
-    sumniepa = sumniepa / (float)niepa;
-    float diff = sumpa - sumniepa;          // Difference between even and odd 
-    
-    if(diff < 0.0){
-      for(int i=0; i<h; i++) {
-        for(int j=0; j<w; j++) {
-          if((i+j)%2 == 0){
-            mlx90640To[j+(w*i)] += abs(diff); 
-          }else{
-            //mlx90640To[j+(w*i)] += abs(diff);
-          }
-        }
-      }
-    }else{
-       for(int i=0; i<h; i++) {
-        for(int j=0; j<w; j++) {
-          if((i+j)%2 == 0){
-            //mlx90640To[j+(w*i)] += abs(diff); 
-          }else{
-            mlx90640To[j+(w*i)] += abs(diff);
-          }
-        }
-      }
-    }       */
-// --- END of Calculate Chess Mode --- //
 
     CenterTemp = (mlx90640To[367]+mlx90640To[368]+mlx90640To[399]+mlx90640To[400]) / 4.0;  // Temp in Center - based on 4 pixels
 
@@ -546,12 +506,43 @@ void loop()
     }
 
 
-    
- 
+    for (int y = 8; y < 24; y++) { // Calculate the average of the center 16x16 pixels
+      for (int x = 8; x < 24; x++) {
+        int idx = x + (y * 32);
+        centerTempSum += mlx90640To[idx];
+        centerPixelCount++;
+
+      }
+    }
+    float avgCenterTemp = centerTempSum / centerPixelCount;
+
+    // Print data in JSON format once per second
+    if (currentTime - lastPrintTime >= 1000) {
+      lastPrintTime = currentTime;
+
+      // Populate JSON document
+      jsonDoc["avg_center_temp"] = avgCenterTemp;
+      jsonDoc["max_temp"] = MaxTemp;
+      jsonDoc["min_temp"] = MinTemp;
+      jsonDoc["vdd"] = vdd;
+      jsonDoc["Ta"] = Ta;
+      JsonArray rawArray = jsonDoc.createNestedArray("raw_temps");
+      for (int i = 0; i < 768; i++) {
+        rawArray.add(mlx90640To[i]);
+      }
+
+      // Serialize JSON and print to Serial
+      serializeJson(jsonDoc, Serial);
+      Serial.println(); // Newline for readability
+
+      // Clear the document to avoid overflow in the next loop
+      jsonDoc.clear();
+
+    }
     //MLX_to_Serial(mlx90640To);
     
   //ThermalImageToWeb(mlx90640To, MinTemp, MaxTemp);
-  delay(50);
+  //delay(50);
   //void ThermalImageToWeb(float mlx90640To[], float MinTemp, float MaxTemp)
 
 
