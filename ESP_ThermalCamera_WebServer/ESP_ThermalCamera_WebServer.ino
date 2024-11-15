@@ -18,6 +18,7 @@
 //#include <Adafruit_SSD1331.h>
 #include "MLX90640_I2C_Driver.h"
 #include "MLX90640_API.h"
+#include "BME280I2C.h"
 #include <ArduinoJson.h>
 
 const byte MLX90640_address = 0x33; //Default 7-bit unshifted address of the MLX90640
@@ -32,6 +33,8 @@ StaticJsonDocument<capacity> jsonDoc;
 float mlx90640To[768];
 paramsMLX90640 mlx90640;
 
+
+BME280I2C bme; 
 // You can use any (4 or) 5 pins
 #define sclk 18
 #define mosi 23
@@ -92,12 +95,18 @@ const char* password = "camera";
 
 float p = 3.1415926;
 // Adafruit_SSD1331 display = Adafruit_SSD1331(cs, dc, mosi, sclk, rst);
-
+float BME_Temp = 0;
+float BME_Hum = 0;
+float BME_Pres = 0;
 float MaxTemp = 0;
 float MinTemp = 0;
 float CenterTemp = 0;
 
 
+String getBMETemp(){
+  extern float BME_Temp;
+  return String(BME_Temp);
+}
 String getCenterTemp(){
   extern float CenterTemp;
   return String(CenterTemp);
@@ -143,6 +152,10 @@ const char index_html[] PROGMEM = R"rawliteral(
   <h2>ESP32 Thermal Camera</h2>
   <p>
     <i class="fas fa-thermometer-half" style="color:#059e8a;"></i> 
+    <span class="dht-labels">BME Temperature: </span> 
+    <span id="temperature">%BME_TEMPERATURE%</span>
+    <sup class="units">&deg;C</sup><br>
+
     <span class="dht-labels">Temperature: </span> 
     <span id="temperature">%TEMPERATURE%</span>
     <sup class="units">&deg;C</sup><br>
@@ -159,6 +172,17 @@ const char index_html[] PROGMEM = R"rawliteral(
   </p>
 </body>
 <script>
+
+setInterval(function ( ) {
+  var xhttp = new XMLHttpRequest();
+  xhttp.onreadystatechange = function() {
+    if (this.readyState == 4 && this.status == 200) {
+      document.getElementById("BME_temperature").innerHTML = this.responseText;
+    }
+  };
+  xhttp.open("GET", "/BME_temperature", true);
+  xhttp.send();
+}, 500 ) ;
 
 setInterval(function ( ) {
   var xhttp = new XMLHttpRequest();
@@ -222,6 +246,9 @@ String processor(const String& var){
   }
   if(var == "TEMPMIN"){
     return getMinTemp();
+  }
+  if(var == "BME_TEMPERATURE"){
+    return getBMETemp();
   }
   
   return String();
@@ -362,11 +389,18 @@ void MLX_to_Serial(float mlx90640To[])
 
 void setup()
 {
-  int sda_pin = 0;
-  int scl_pin = 1;
-  Wire.setPins(sda_pin, scl_pin);
+  int Cam_sda_pin = 1;
+  int Cam_scl_pin = 2;
+
+  int BME_sda_pin = 3;
+  int BME_scl_pin = 4;
+
+  Wire.setPins(Cam_sda_pin, Cam_scl_pin);
   Wire.begin();
   Wire.setClock(400000); //Increase I2C clock speed to 400kHz
+
+  Wire1.setPins(BME_sda_pin, BME_scl_pin);
+  Wire1.begin();
   Serial.begin(115200);//while (!Serial); //Wait for user to open terminal
 
   if(!SPIFFS.begin(true)){
@@ -377,8 +411,8 @@ void setup()
   WiFi.mode(WIFI_AP); //Access Point mode
   WiFi.softAP(ssid, password);
   
-  Serial.print("SDA pin: "); Serial.println(sda_pin);
-  Serial.print("SCL pin: ");Serial.println(scl_pin);
+  Serial.print("Camera SDA pin: "); Serial.println(Cam_sda_pin);
+  Serial.print("Camera SCL pin: ");Serial.println(Cam_scl_pin);
   
   Serial.println("MLX90640 IR Array Example");
 
@@ -388,6 +422,7 @@ void setup()
     while (1);
   }
   Serial.println("MLX90640 online!");
+
 
   //Get device parameters - We only have to do this once
   int status=0;
@@ -404,7 +439,26 @@ void setup()
   SetRefreshRate = MLX90640_SetRefreshRate(0x33,0x03);
   //int SetInterleavedMode = MLX90640_SetInterleavedMode(MLX90640_address);
   int SetChessMode = MLX90640_SetChessMode(MLX90640_address);
-  
+
+// --- BME280 --- //
+  Serial.print("BME 280 SDA pin: "); Serial.println(BME_sda_pin);
+  Serial.print("BME 280 SCL pin: "); Serial.println(BME_scl_pin);
+
+  while(!bme.begin()){
+    Serial.println("BME280 Not found!");
+    delay(1000);
+  }
+    switch(bme.chipModel())
+  {
+     case BME280::ChipModel_BME280:
+       Serial.println("Found BME280 sensor! Success.");
+       break;
+     case BME280::ChipModel_BMP280:
+       Serial.println("Found BMP280 sensor! No Humidity available.");
+       break;
+     default:
+       Serial.println("Found UNKNOWN sensor! Error!");
+  }
 
 // --- Part Display OLED --- //
 
@@ -434,6 +488,9 @@ void setup()
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send_P(200, "text/html", index_html, processor);
     //request->send_P(200, "text/html", index_html);
+  });
+    server.on("/BME_temperature", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/plain", getBMETemp().c_str());
   });
   server.on("/temperature", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send_P(200, "text/plain", getCenterTemp().c_str());
@@ -516,11 +573,19 @@ void loop()
     }
     float avgCenterTemp = centerTempSum / centerPixelCount;
 
+    //BME Sensor Data
+
+   BME280::TempUnit tempUnit(BME280::TempUnit_Celsius);
+   BME280::PresUnit presUnit(BME280::PresUnit_Pa);
+
+   bme.read(BME_Pres, BME_Temp, BME_Hum, tempUnit, presUnit);
+
     // Print data in JSON format once per second
     if (currentTime - lastPrintTime >= 1000) {
       lastPrintTime = currentTime;
 
       // Populate JSON document
+      jsonDoc["bme_sensor_temp"] = BME_Temp;
       jsonDoc["avg_center_temp"] = avgCenterTemp;
       jsonDoc["max_temp"] = MaxTemp;
       jsonDoc["min_temp"] = MinTemp;
